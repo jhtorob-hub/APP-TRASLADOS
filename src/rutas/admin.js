@@ -4,7 +4,11 @@ import { Router } from "express";
 import { config } from "../config.js";
 import { q, uno, filas, ajustes, guardarAjuste, registrarEvento } from "../db.js";
 import { exigir, hashPin } from "../sesion.js";
-import { ESTADOS, ACTIVAS, aceptar, avanzar, cancelar, cambiarHora, ofrecer, avisarHuesped, reservaCompleta } from "../reservas.js";
+import { ESTADOS, ACTIVAS, aceptar, avanzar, cancelar, cambiarHora, ofrecer, avisarHuesped, reservaCompleta, cotizar, crearReserva, marcarPagada } from "../reservas.js";
+import { urlPago, referenciaNueva } from "../wompi.js";
+import { enviar } from "../whatsapp.js";
+import { huesped as txtHuesped } from "../textos.js";
+import { fechaTexto, horaTexto } from "../tiempo.js";
 import { calcular, VEHICULOS, AJUSTES_INICIALES } from "../precios.js";
 import { procesarEntrante } from "../bot-conductor.js";
 import { normalizar } from "../whatsapp.js";
@@ -51,6 +55,45 @@ admin.get("/api/admin/viajes", async (req, res) => {
     params
   );
   res.json(lista.map((r) => ({ ...r, semaforo: semaforo(r), estadoTexto: ESTADOS[r.estado] })));
+});
+
+// Reserva manual (huésped que escribe por WhatsApp, llamada, reserva con menos de 3 h).
+admin.get("/api/admin/opciones-reserva", async (req, res) => {
+  res.json({
+    propiedades: await filas("select p.codigo, p.nombre, p.direccion, a.nombre anfitrion from propiedades p join anfitriones a on a.id=p.anfitrion_id where p.activa order by p.nombre"),
+    zonas: await filas("select codigo, nombre from zonas order by orden"),
+    destinos: await filas("select codigo, nombre, pide_vuelo from destinos order by orden"),
+  });
+});
+
+admin.post("/api/admin/viajes/cotizar", async (req, res) => {
+  try {
+    const k = await cotizar(req.body, { admin: true });
+    res.json({ precio: k.precio, pago: k.pago, comision: k.comision, neto: k.neto, vehiculo: k.vehiculo, nocturno: k.nocturno, disponibilidad: k.disponibilidad,
+      recogidaTexto: `${fechaTexto(k.recogida)} · ${horaTexto(k.recogida)}` });
+  } catch (e) {
+    err(res, e);
+  }
+});
+
+admin.post("/api/admin/viajes/nueva", async (req, res) => {
+  try {
+    const r = await crearReserva(req.body, { admin: true });
+    const pago = req.body.pago || "enlace";
+    if (pago === "enlace") {
+      const ref = referenciaNueva(r.codigo);
+      await q("update reservas set pago_ref=$2 where id=$1", [r.id, ref]);
+      const url = urlPago({ ...r, pago_ref: ref });
+      const c = await reservaCompleta(r.id);
+      if (req.body.enviar !== false) await enviar(c.telefono, txtHuesped.enlacePago(c, url), { reservaId: r.id });
+      await registrarEvento(r.id, "enlace_pago", "Enlace de pago enviado al huésped");
+      return res.json({ ok: true, codigo: r.codigo, id: r.id, pagoUrl: url });
+    }
+    await marcarPagada(r.codigo, { metodo: `manual:${pago}` });
+    res.json({ ok: true, codigo: r.codigo, id: r.id });
+  } catch (e) {
+    err(res, e);
+  }
 });
 
 admin.get("/api/admin/viajes/:id", async (req, res) => {

@@ -118,6 +118,11 @@ export const huesped = {
     ].join("\n");
   },
 
+  enlacePago: (r, url) =>
+    r.idioma === "en"
+      ? [`🚐 *${config.marca}* — your private transfer #${r.codigo}`, `🕐 Pickup ${fechaHoraTexto(r.recogida, "en")}`, `📍 ${ruta(r, "en")}`, `🚐 ${veh(r, "en")} · ${r.pasajeros} passenger(s)`, `💳 Total: ${pesos(r.precio)} COP`, ``, `Pay here to confirm: ${url}`].join("\n")
+      : [`🚐 *${config.marca}* — tu traslado privado #${r.codigo}`, `🕐 Recogida ${fechaHoraTexto(r.recogida)}`, `📍 ${ruta(r, "es")}`, `🚐 ${veh(r, "es")} · ${r.pasajeros} pasajero(s)`, `💳 Total: ${pesos(r.precio)}`, ``, `Paga aquí para confirmar: ${url}`].join("\n"),
+
   cancelada: (r) =>
     r.idioma === "en"
       ? `Your booking #${r.codigo} was cancelled. ${r.motivo_cancelacion || ""} If a refund applies, it will be processed to your card.`

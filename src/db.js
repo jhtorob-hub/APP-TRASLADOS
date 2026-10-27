@@ -95,6 +95,7 @@ create table if not exists reservas (
   liquidado_conductor_en timestamptz, liquidado_anfitrion_en timestamptz,
   creado timestamptz default now()
 );
+alter table reservas add column if not exists origen text default 'qr';
 create index if not exists reservas_recogida on reservas (recogida);
 create index if not exists reservas_estado on reservas (estado);
 

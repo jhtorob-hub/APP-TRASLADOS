@@ -55,6 +55,35 @@ export async function reservaCompleta(idOCodigo) {
 }
 
 /** Todo lo que necesita la página del huésped para una propiedad (precios por destino y vehículo). */
+/** Destinos de una zona con el precio público por vehículo (normal y nocturno). */
+async function destinosConPrecios(zona, pct, aj) {
+  const destinos = await filas(
+    `select d.id, d.codigo, d.nombre, d.nombre_en, d.tipo, d.pide_vuelo, d.antes_nacional, d.antes_internacional, t.pago_sedan, t.minutos
+       from destinos d join tarifas t on t.destino_id = d.id and t.zona = $1 order by d.orden`,
+    [zona]
+  );
+  for (const d of destinos) {
+    d.precios = {};
+    for (const v of Object.keys(VEHICULOS)) {
+      d.precios[v] = {
+        normal: calcular({ pagoSedan: d.pago_sedan, vehiculo: v, aj, pctAnfitrion: pct }).precio,
+        nocturno: calcular({ pagoSedan: d.pago_sedan, vehiculo: v, aj, nocturno: true, pctAnfitrion: pct }).precio,
+      };
+    }
+  }
+  return destinos;
+}
+
+const reglasPublicas = (aj) => ({
+  espera_nacional: aj.espera_nacional,
+  espera_internacional: aj.espera_internacional,
+  horas_garantizado: aj.horas_garantizado,
+  horas_minimo: aj.horas_minimo,
+  pct_nocturno: aj.pct_nocturno,
+  descuento_regreso: aj.descuento_regreso,
+});
+
+/** Todo lo que necesita la página del huésped para una propiedad (precios por destino y vehículo). */
 export async function datosPropiedad(codigo) {
   const prop = await uno(
     `select p.id, p.codigo, p.nombre, p.direccion, p.zona, p.activa, a.id anfitrion_id, a.nombre anfitrion_nombre, a.comision_pct, a.activo anfitrion_activo,
@@ -65,45 +94,40 @@ export async function datosPropiedad(codigo) {
   );
   if (!prop || !prop.activa) return null;
   const aj = await ajustes();
-  const destinos = await filas(
-    `select d.id, d.codigo, d.nombre, d.nombre_en, d.tipo, d.pide_vuelo, d.antes_nacional, d.antes_internacional, t.pago_sedan, t.minutos
-       from destinos d join tarifas t on t.destino_id = d.id and t.zona = $1 order by d.orden`,
-    [prop.zona]
-  );
   const pct = pctAnfitrion({ comision_pct: prop.comision_pct }, prop.num_propiedades, aj);
-  for (const d of destinos) {
-    d.precios = {};
-    for (const v of Object.keys(VEHICULOS)) {
-      d.precios[v] = {
-        normal: calcular({ pagoSedan: d.pago_sedan, vehiculo: v, aj, pctAnfitrion: pct }).precio,
-        nocturno: calcular({ pagoSedan: d.pago_sedan, vehiculo: v, aj, nocturno: true, pctAnfitrion: pct }).precio,
-      };
-    }
-    delete d.pago_sedan;
-  }
+  const destinos = (await destinosConPrecios(prop.zona, pct, aj)).map(({ pago_sedan, ...d }) => d);
   return {
     propiedad: { codigo: prop.codigo, nombre: prop.nombre, direccion: prop.direccion, zona: prop.zona, anfitrion: prop.anfitrion_nombre },
     destinos,
     vehiculos: VEHICULOS,
     fotos: aj.fotos_vehiculos || {},
-    reglas: {
-      espera_nacional: aj.espera_nacional,
-      espera_internacional: aj.espera_internacional,
-      horas_garantizado: aj.horas_garantizado,
-      horas_minimo: aj.horas_minimo,
-      pct_nocturno: aj.pct_nocturno,
-      descuento_regreso: aj.descuento_regreso,
-    },
+    reglas: reglasPublicas(aj),
     _interno: { propiedadId: prop.id, anfitrionId: prop.anfitrion_id, pct },
   };
 }
 
-/** Calcula hora de recogida, precio y reparto. Lanza Error con mensaje claro si algo no cuadra. */
-export async function cotizar(entrada) {
-  const datos = await datosPropiedad(entrada.propiedad);
-  if (!datos) throw new Error("Esta propiedad no existe o no está activa.");
+/**
+ * Calcula hora de recogida, precio y reparto. Lanza Error con mensaje claro si algo no cuadra.
+ * Con { admin: true } (reserva manual desde el tablero) se puede reservar sin alojamiento
+ * (dirección + zona) y con menos de las horas mínimas.
+ */
+export async function cotizar(entrada, { admin = false } = {}) {
   const aj = await ajustes();
-  const destino = datos.destinos.find((d) => d.codigo === entrada.destino);
+  let base;
+  if (entrada.propiedad) {
+    const datos = await datosPropiedad(entrada.propiedad);
+    if (!datos) throw new Error("Esta propiedad no existe o no está activa.");
+    base = { zona: datos.propiedad.zona, direccion: datos.propiedad.direccion, ...datos._interno };
+  } else if (admin) {
+    const direccion = String(entrada.direccion || "").trim();
+    if (direccion.length < 5) throw new Error("Escribe la dirección de recogida o entrega.");
+    if (!(await uno("select 1 from zonas where codigo=$1", [entrada.zona]))) throw new Error("Elige la zona de tarifa.");
+    base = { zona: entrada.zona, direccion, propiedadId: null, anfitrionId: null, pct: 0 };
+  } else {
+    throw new Error("Falta el alojamiento.");
+  }
+  const destinos = await destinosConPrecios(base.zona, base.pct, aj);
+  const destino = destinos.find((d) => d.codigo === entrada.destino);
   if (!destino) throw new Error("Destino no válido.");
   const sentido = entrada.sentido === "desde_destino" ? "desde_destino" : "al_destino";
   const pasajeros = Math.max(1, Math.min(30, parseInt(entrada.pasajeros, 10) || 1));
@@ -114,15 +138,16 @@ export async function cotizar(entrada) {
   const horaVuelo = deFechaHora(entrada.fecha, entrada.hora);
   if (!horaVuelo) throw new Error("Revisa la fecha y la hora.");
   const tipoVuelo = entrada.tipo_vuelo === "internacional" ? "internacional" : "nacional";
-  const t = await uno("select pago_sedan, minutos from tarifas where zona=$1 and destino_id=$2", [datos.propiedad.zona, destino.id]);
 
   let recogida = horaVuelo;
   if (sentido === "al_destino") {
     const antes = tipoVuelo === "internacional" ? destino.antes_internacional : destino.antes_nacional;
-    recogida = new Date(horaVuelo.getTime() - (antes + t.minutos) * 60000);
+    recogida = new Date(horaVuelo.getTime() - (antes + destino.minutos) * 60000);
   }
   const horasFaltan = (recogida.getTime() - Date.now()) / 3600000;
-  if (horasFaltan < Number(aj.horas_minimo)) {
+  if (admin) {
+    if (horasFaltan < 0) throw new Error("La hora de recogida ya pasó.");
+  } else if (horasFaltan < Number(aj.horas_minimo)) {
     throw new Error(`Las reservas en línea son con mínimo ${aj.horas_minimo} horas de anticipación. Escríbenos por WhatsApp y vemos si hay un vehículo disponible.`);
   }
   if (horasFaltan > 24 * 180) throw new Error("La fecha es demasiado lejana.");
@@ -141,34 +166,36 @@ export async function cotizar(entrada) {
       }
     }
   }
-  const c = calcular({ pagoSedan: t.pago_sedan, vehiculo, aj, nocturno, descuento, pctAnfitrion: datos._interno.pct });
-  return { datos, destino, sentido, pasajeros, maletas, vehiculo, horaVuelo, tipoVuelo, recogida, disponibilidad, nocturno, descuento, reservaOrigen, ...c };
+  // Descuento manual del administrador (fracción 0–0.5), sale del margen como el del regreso.
+  if (admin && Number(entrada.descuento) > 0) descuento = Math.min(0.5, Number(entrada.descuento));
+  const c = calcular({ pagoSedan: destino.pago_sedan, vehiculo, aj, nocturno, descuento, pctAnfitrion: base.pct });
+  return { base, destino, sentido, pasajeros, maletas, vehiculo, horaVuelo, tipoVuelo, recogida, disponibilidad, nocturno, descuento, reservaOrigen, ...c };
 }
 
-export async function crearReserva(entrada) {
+export async function crearReserva(entrada, { admin = false } = {}) {
   const nombre = String(entrada.nombre || "").trim().slice(0, 80);
   const telefono = String(entrada.telefono || "").replace(/\D/g, "");
   const correo = String(entrada.correo || "").trim().slice(0, 120);
   if (nombre.length < 2) throw new Error("Escribe tu nombre.");
   if (telefono.length < 10) throw new Error("Escribe tu WhatsApp con el indicativo del país (ej. +1 555 123 4567).");
   if (correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(correo)) throw new Error("Revisa el correo.");
-  const k = await cotizar(entrada);
+  const k = await cotizar(entrada, { admin });
   let codigo = codigoNuevo();
   while (await uno("select 1 from reservas where codigo=$1", [codigo])) codigo = codigoNuevo();
   const r = await uno(
     `insert into reservas (codigo, propiedad_id, anfitrion_id, reserva_origen, sentido, destino_id, vuelo, tipo_vuelo, hora_vuelo, recogida,
        pasajeros, maletas, vehiculo, nocturno, disponibilidad, nombre, telefono, correo, idioma, direccion, notas,
-       precio, pago_conductor, comision_anfitrion, pasarela, neto, descuento)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) returning *`,
+       precio, pago_conductor, comision_anfitrion, pasarela, neto, descuento, origen)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28) returning *`,
     [
-      codigo, k.datos._interno.propiedadId, k.datos._interno.anfitrionId, k.reservaOrigen, k.sentido, k.destino.id,
+      codigo, k.base.propiedadId, k.base.anfitrionId, k.reservaOrigen, k.sentido, k.destino.id,
       String(entrada.vuelo || "").toUpperCase().replace(/\s+/g, "").slice(0, 12), k.tipoVuelo, k.horaVuelo, k.recogida,
       k.pasajeros, k.maletas, k.vehiculo, k.nocturno, k.disponibilidad, nombre, telefono, correo,
-      entrada.idioma === "en" ? "en" : "es", k.datos.propiedad.direccion, String(entrada.notas || "").slice(0, 300),
-      k.precio, k.pago, k.comision, k.pasarela, k.neto, k.descuento,
+      entrada.idioma === "en" ? "en" : "es", k.base.direccion, String(entrada.notas || "").slice(0, 300),
+      k.precio, k.pago, k.comision, k.pasarela, k.neto, k.descuento, admin ? "tablero" : "qr",
     ]
   );
-  await registrarEvento(r.id, "creada", `Reserva creada por ${nombre} · ${fechaHoraTexto(k.recogida)} · $${k.precio}`);
+  await registrarEvento(r.id, "creada", `${admin ? "Reserva manual desde el tablero" : `Reserva creada por ${nombre}`} · ${fechaHoraTexto(k.recogida)} · $${k.precio}`);
   return r;
 }
 

@@ -12,3 +12,5 @@ Una línea por decisión o error, con fecha. Lo que José decide manda.
 - 2026-10-26: Respaldo nocturno = empresa de turno con al menos 1 vehículo de cada categoría (sedán, camioneta, van), no una sola persona. Si no hay van: 2 camionetas a cargo de la plataforma.
 - 2026-10-26: Una sola app con las 4 pantallas (huésped, anfitrión, conductor, administrador) y barra de prueba para saltar entre ellas con un clic. Más adelante se pueden separar.
 - 2026-10-26: Piloto: QR primero en los apartamentos propios y de The Concept Group.
+- 2026-10-27: El nombre de la marca queda **Llegá** (José: "me encanta ese nombre").
+- 2026-10-27: Reserva manual desde el tablero (huéspedes por WhatsApp, llamadas o con menos de 3 h): con o sin alojamiento, enlace de pago por WhatsApp o pagada en efectivo/transferencia/cortesía; descuento opcional que sale del margen.

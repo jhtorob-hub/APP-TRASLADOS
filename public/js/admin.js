@@ -1,6 +1,6 @@
 // Tablero de control del administrador.
 
-import { api, esc, pesos, $, $$, fechaHora, fecha, hora, marcaHTML, aviso, copiar, VEH_ES } from "./comun.js";
+import { api, esc, pesos, $, $$, fechaHora, fecha, hora, marcaHTML, aviso, copiar, diaISO, VEH_ES } from "./comun.js";
 import { estado as global, login, salir } from "./app.js";
 
 const PESTANAS = [
@@ -66,7 +66,7 @@ async function viajes(c) {
   const amarillos = lista.filter((v) => v.semaforo === "amarillo").length;
   c.innerHTML = `
     <div class="fila entre envuelve" style="margin-bottom:12px">
-      <div class="chips">${vistas.map(([k, t]) => `<button class="chip ${k === vista ? "activa" : ""}" data-vista="${k}">${t}</button>`).join("")}</div>
+      <div class="fila envuelve"><button class="btn prim chico" id="v-nueva">+ Nueva reserva</button><div class="chips">${vistas.map(([k, t]) => `<button class="chip ${k === vista ? "activa" : ""}" data-vista="${k}">${t}</button>`).join("")}</div></div>
       <div class="leyenda"><span><i class="semaforo rojo"></i> Sin conductor (${rojos})</span><span><i class="semaforo amarillo"></i> Asignado, sin confirmar (${amarillos})</span><span><i class="semaforo verde"></i> Confirmado</span></div>
     </div>
     ${lista.length ? `<div class="tabla-envoltura"><table class="tabla">
@@ -83,6 +83,7 @@ async function viajes(c) {
         <td><span class="estado ${v.semaforo === "gris" ? "" : v.semaforo}">${esc(v.estadoTexto)}</span></td></tr>`).join("")}</tbody></table></div>`
       : `<div class="tarjeta suave">No hay viajes en esta vista.</div>`}`;
   $$("[data-vista]", c).forEach((b) => b.addEventListener("click", () => { vista = b.dataset.vista; viajes(c); }));
+  $("#v-nueva").addEventListener("click", nuevaReserva);
   $$("tr[data-id]", c).forEach((tr) => tr.addEventListener("click", () => detalle(Number(tr.dataset.id))));
 }
 
@@ -450,4 +451,105 @@ async function mensajes(c) {
     refrescarBurbuja();
   });
   $("#s-ciclo").addEventListener("click", async () => { await accion("/api/admin/correr-programador", {}, "Tareas ejecutadas"); mensajes(c); refrescarBurbuja(); });
+}
+
+// ---------- Reserva manual ----------
+
+async function nuevaReserva() {
+  const op = await api("/api/admin/opciones-reserva");
+  cerrarPanel();
+  const velo = document.createElement("div");
+  velo.className = "velo";
+  const panel = document.createElement("aside");
+  panel.className = "panel-lateral";
+  panel.innerHTML = `
+    <div class="fila entre"><h2>Nueva reserva</h2><button class="btn chico" id="n-cerrar">✕</button></div>
+    <p class="suave peq">Para huéspedes que escriben por WhatsApp, llaman o necesitan el viaje con menos de 3 horas.</p>
+    <form class="tarjeta col seccion" id="n-form">
+      <label class="campo">Alojamiento
+        <select name="propiedad"><option value="">— Cliente directo (sin alojamiento) —</option>${op.propiedades.map((p) => `<option value="${esc(p.codigo)}">${esc(p.nombre)} · ${esc(p.anfitrion)}</option>`).join("")}</select></label>
+      <div id="n-directo" class="col">
+        <label class="campo">Dirección<input type="text" name="direccion" placeholder="Cra. 43A #1-50, El Poblado"></label>
+        <label class="campo">Zona de tarifa<select name="zona">${op.zonas.map((z) => `<option value="${z.codigo}">${z.codigo} · ${esc(z.nombre)}</option>`).join("")}</select></label>
+      </div>
+      <div class="dos">
+        <label class="campo">Sentido<select name="sentido"><option value="desde_destino">Llega (aeropuerto → alojamiento)</option><option value="al_destino">Sale (alojamiento → aeropuerto)</option></select></label>
+        <label class="campo">Destino<select name="destino">${op.destinos.map((d) => `<option value="${d.codigo}">${esc(d.nombre)}</option>`).join("")}</select></label>
+      </div>
+      <div class="dos">
+        <label class="campo">Tipo de vuelo<select name="tipo_vuelo"><option value="nacional">Nacional</option><option value="internacional">Internacional</option></select></label>
+        <label class="campo">Vuelo<input type="text" name="vuelo" placeholder="AV9485"></label>
+      </div>
+      <div class="dos siempre">
+        <label class="campo">Fecha<input type="date" name="fecha" value="${diaISO(0)}" required></label>
+        <label class="campo">Hora del vuelo / bus<input type="time" name="hora" required></label>
+      </div>
+      <div class="dos siempre">
+        <label class="campo">Pasajeros<input type="number" name="pasajeros" value="2" min="1" max="19"></label>
+        <label class="campo">Maletas grandes<input type="number" name="maletas" value="2" min="0" max="24"></label>
+      </div>
+      <label class="campo">Vehículo<select name="vehiculo"><option value="">Automático (el que quepa)</option><option value="sedan">Sedán</option><option value="camioneta">Camioneta</option><option value="van">Van</option></select></label>
+      <label class="campo">Nombre del huésped<input type="text" name="nombre" required></label>
+      <div class="dos">
+        <label class="campo">WhatsApp con indicativo<input type="tel" name="telefono" placeholder="57 300 123 4567 / 1 555 123 4567" required></label>
+        <label class="campo">Idioma<select name="idioma"><option value="es">Español</option><option value="en">Inglés</option></select></label>
+      </div>
+      <label class="campo">Correo (opcional)<input type="email" name="correo"></label>
+      <label class="campo">Notas para el conductor<input type="text" name="notas"></label>
+      <label class="campo">Descuento % (opcional)<input type="number" name="descuento" min="0" max="50" value="0"><span class="ayuda">Sale de tu margen; el conductor recibe lo mismo.</span></label>
+      <label class="campo">Pago<select name="pago">
+        <option value="enlace">Enviarle enlace de pago por WhatsApp</option>
+        <option value="efectivo">Ya pagó en efectivo</option>
+        <option value="transferencia">Ya pagó por transferencia</option>
+        <option value="cortesia">Cortesía (sin cobro al huésped)</option></select></label>
+      <div id="n-cot"></div>
+      <p class="error" id="n-error"></p>
+      <div class="dos siempre"><button type="button" class="btn" id="n-calcular">Calcular precio</button><button class="btn prim">Crear reserva</button></div>
+    </form>`;
+  document.body.append(velo, panel);
+  velo.addEventListener("click", cerrarPanel);
+  $("#n-cerrar").addEventListener("click", cerrarPanel);
+  const form = $("#n-form");
+  const sinc = () => $("#n-directo").classList.toggle("oculto", !!form.elements.propiedad.value);
+  form.elements.propiedad.addEventListener("change", sinc);
+  sinc();
+  const datos = () => {
+    const d = Object.fromEntries(new FormData(form));
+    d.descuento = Number(d.descuento || 0) / 100;
+    d.telefono = String(d.telefono).replace(/\D/g, "");
+    if (d.telefono.length === 10 && d.telefono.startsWith("3")) d.telefono = "57" + d.telefono;
+    return d;
+  };
+  const calcular = async () => {
+    $("#n-error").textContent = "";
+    try {
+      const k = await api("/api/admin/viajes/cotizar", { datos: datos() });
+      $("#n-cot").innerHTML = `<div class="resumen"><div class="linea"><span>Recogida</span><b>${esc(k.recogidaTexto)}${k.nocturno ? " 🌙" : ""}</b></div>
+        <div class="linea"><span>${VEH_ES[k.vehiculo]}</span><span></span></div>
+        <div class="linea"><span>Precio</span><span class="total">${pesos(k.precio)}</span></div>
+        <div class="linea"><span>Conductor · anfitrión · tu neto</span><span>${pesos(k.pago)} · ${pesos(k.comision)} · ${pesos(k.neto)}</span></div></div>
+        ${k.disponibilidad === "sujeto" ? `<div class="nota amarilla" style="margin-top:8px">Menos de 12 h: confirma conductor apenas la crees.</div>` : ""}`;
+      return true;
+    } catch (e) { $("#n-error").textContent = e.message; return false; }
+  };
+  $("#n-calcular").addEventListener("click", calcular);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!(await calcular())) return;
+    try {
+      const r = await api("/api/admin/viajes/nueva", { datos: datos() });
+      aviso(`Reserva #${r.codigo} creada`);
+      if (r.pagoUrl) {
+        panel.innerHTML = `<div class="fila entre"><h2>Reserva #${esc(r.codigo)}</h2><button class="btn chico" id="n-cerrar2">✕</button></div>
+          <div class="tarjeta col seccion"><div class="nota verde">Se le envió el enlace de pago por WhatsApp. Cuando pague, se confirma sola y se ofrece a los conductores.</div>
+          <div class="copiable">${esc(r.pagoUrl)}</div><button class="btn" id="n-copiar">Copiar enlace</button><button class="btn prim" id="n-ver">Ver la reserva</button></div>`;
+        $("#n-cerrar2").addEventListener("click", cerrarPanel);
+        $("#n-copiar").addEventListener("click", () => copiar(r.pagoUrl));
+        $("#n-ver").addEventListener("click", () => detalle(r.id));
+      } else {
+        detalle(r.id);
+      }
+      if (pestana === "viajes") viajes($("#contenido"));
+    } catch (e2) { $("#n-error").textContent = e2.message; }
+  });
 }
