@@ -119,7 +119,8 @@ create table if not exists mensajes (
 `;
 
 const ZONAS = [
-  ["A", "Poblado, Laureles, Estadio, Envigado", "El Poblado, Provenza, Manila, Laureles, Estadio, Conquistadores, Envigado", 1],
+  ["A", "Poblado, Laureles, Estadio", "El Poblado, Provenza, Manila, Laureles, Estadio, Conquistadores", 1],
+  ["E", "Envigado", "Envigado, Zúñiga, El Esmeraldal", 5],
   ["B", "Centro, Candelaria, Buenos Aires, Belén", "La Candelaria, Centro, Buenos Aires, Bomboná, Belén, Prado", 2],
   ["C", "Sabaneta, Itagüí, La Estrella", "Sabaneta, Itagüí, La Estrella, Caldas", 3],
   ["D", "Bello, Copacabana", "Bello, Copacabana, Girardota", 4],
@@ -134,12 +135,15 @@ const DESTINOS = [
 ];
 
 // Pago al conductor en sedán (supuestos iniciales del tarifario) y minutos de trayecto por zona.
+// Versión 2 (2026-10-27): ajustada a precios reales del mercado (taxi oficial $132.000 al JMC, transfers locales
+// $160.000–170.000 sedán, $210.000 camioneta, $310.000–380.000 van; dentro de la ciudad el taxi cobra $15.000–30.000).
 const TARIFAS = {
-  JMC: { A: [120000, 60], B: [120000, 60], C: [140000, 75], D: [130000, 75] },
-  EOH: { A: [45000, 20], B: [40000, 20], C: [50000, 30], D: [60000, 40] },
-  TSUR: { A: [45000, 20], B: [40000, 20], C: [45000, 25], D: [60000, 40] },
-  TNORTE: { A: [55000, 30], B: [40000, 20], C: [65000, 40], D: [40000, 20] },
+  JMC: { A: [120000, 60], B: [120000, 60], C: [140000, 75], D: [130000, 75], E: [128000, 70] },
+  EOH: { A: [32000, 20], B: [28000, 20], C: [36000, 30], D: [44000, 40], E: [32000, 25] },
+  TSUR: { A: [28000, 20], B: [28000, 20], C: [32000, 25], D: [44000, 40], E: [28000, 20] },
+  TNORTE: { A: [36000, 30], B: [28000, 20], C: [44000, 40], D: [28000, 20], E: [40000, 40] },
 };
+const VERSION_TARIFAS = 2;
 
 export async function iniciarBase() {
   await q(ESQUEMA);
@@ -160,7 +164,31 @@ export async function iniciarBase() {
     }
     console.log("[base] Zonas, destinos y tarifas iniciales cargados.");
   }
+  await actualizarTarifas();
   if (config.semillaDemo) await semillaDemo();
+}
+
+/** Aplica una vez las tarifas de la versión vigente (no pisa cambios hechos después en el tablero). */
+async function actualizarTarifas() {
+  const fila = await uno("select valor from ajustes where clave='version_tarifas'");
+  if (fila && Number(fila.valor) >= VERSION_TARIFAS) return;
+  for (const z of ZONAS) {
+    await q("insert into zonas (codigo, nombre, barrios, orden) values ($1,$2,$3,$4) on conflict (codigo) do update set nombre=excluded.nombre, barrios=excluded.barrios, orden=excluded.orden", z);
+  }
+  for (const [codigo, porZona] of Object.entries(TARIFAS)) {
+    const d = await uno("select id from destinos where codigo=$1", [codigo]);
+    if (!d) continue;
+    for (const [zona, [pago, minutos]] of Object.entries(porZona)) {
+      await q(
+        "insert into tarifas (zona, destino_id, pago_sedan, minutos) values ($1,$2,$3,$4) on conflict (zona, destino_id) do update set pago_sedan=excluded.pago_sedan, minutos=excluded.minutos",
+        [zona, d.id, pago, minutos]
+      );
+    }
+  }
+  await guardarAjuste("mult_camioneta", 1.35);
+  await guardarAjuste("mult_van", 2.2);
+  await guardarAjuste("version_tarifas", VERSION_TARIFAS);
+  console.log(`[base] Tarifas actualizadas a la versión ${VERSION_TARIFAS}.`);
 }
 
 export async function ajustes() {

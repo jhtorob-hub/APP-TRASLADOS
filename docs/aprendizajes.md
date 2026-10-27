@@ -14,3 +14,4 @@ Una línea por decisión o error, con fecha. Lo que José decide manda.
 - 2026-10-26: Piloto: QR primero en los apartamentos propios y de The Concept Group.
 - 2026-10-27: El nombre de la marca queda **Llegá** (José: "me encanta ese nombre").
 - 2026-10-27: Reserva manual desde el tablero (huéspedes por WhatsApp, llamadas o con menos de 3 h): con o sin alojamiento, enlace de pago por WhatsApp o pagada en efectivo/transferencia/cortesía; descuento opcional que sale del margen.
+- 2026-10-27: Tarifas versión 2 ajustadas a precios reales 2026 (José: "listo conforme eso"): JMC sedán 150k / camioneta 205k / van 330k desde Poblado-Laureles; multiplicadores camioneta 1,35 y van 2,2; Envigado pasa a zona E (+10k al JMC); Olaya Herrera y terminales bajan a 35–55k en sedán porque el taxi cobra 15–30k.
